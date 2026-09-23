@@ -21,29 +21,31 @@ const state = {
 
 // ---------- utils ----------
 
-const API_CACHE_KEY = "f1picks_api_cache_v1";
-const API_CACHE_TTL_MS = 10 * 60 * 1000; // 10분: 짧은 시간에 재방문해도 openf1 요청을 아낌
+const API_CACHE_KEY = "f1picks_api_cache_v2";
+const TTL_SHORT = 10 * 60 * 1000; // 10분: 곧 바뀔 수 있는 데이터 (예정된 세션, 최근 라이브 결과)
+const TTL_MEDIUM = 60 * 60 * 1000; // 1시간: 시즌 일정처럼 가끔만 바뀌는 데이터
+const TTL_LONG = 30 * 24 * 60 * 60 * 1000; // 30일: 이미 끝난 경기 결과·명단처럼 절대 안 바뀌는 데이터
 
 function readApiCache(url) {
   try {
     const all = JSON.parse(localStorage.getItem(API_CACHE_KEY) || "{}");
     const entry = all[url];
-    if (entry && Date.now() - entry.t < API_CACHE_TTL_MS) return entry.v;
+    if (entry && Date.now() - entry.t < entry.ttl) return entry.v;
   } catch (e) { /* ignore */ }
   return undefined;
 }
 
-function writeApiCache(url, value) {
+function writeApiCache(url, value, ttl) {
   try {
     const all = JSON.parse(localStorage.getItem(API_CACHE_KEY) || "{}");
-    all[url] = { t: Date.now(), v: value };
+    all[url] = { t: Date.now(), v: value, ttl };
     localStorage.setItem(API_CACHE_KEY, JSON.stringify(all));
   } catch (e) { /* storage full or unavailable, ignore */ }
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function fetchJSON(url, { retries = 4 } = {}) {
+async function fetchJSON(url, { retries = 4, ttl = TTL_SHORT } = {}) {
   const cached = readApiCache(url);
   if (cached !== undefined) return cached;
 
@@ -55,7 +57,7 @@ async function fetchJSON(url, { retries = 4 } = {}) {
     }
     if (!res.ok) throw new Error(`${res.status} ${url}`);
     const data = await res.json();
-    if (url.includes(OPENF1)) writeApiCache(url, data);
+    if (url.includes(OPENF1)) writeApiCache(url, data, ttl);
     return data;
   }
 }
@@ -136,8 +138,8 @@ async function writePick(round, session, person, arr) {
 
 async function loadRounds() {
   const [meetings, sessions] = await Promise.all([
-    fetchJSON(`${OPENF1}/meetings?year=${SEASON_YEAR}`),
-    fetchJSON(`${OPENF1}/sessions?year=${SEASON_YEAR}`),
+    fetchJSON(`${OPENF1}/meetings?year=${SEASON_YEAR}`, { ttl: TTL_MEDIUM }),
+    fetchJSON(`${OPENF1}/sessions?year=${SEASON_YEAR}`, { ttl: TTL_MEDIUM }),
   ]);
 
   const gpMeetings = meetings
@@ -178,16 +180,19 @@ async function loadDriverRoster() {
   // 아직 한 라운드도 안 열렸다면 프리시즌 테스트라도 시도
   if (candidates.length === 0) candidates.push(11465);
 
-  // API 속도 제한을 피하려고 병렬이 아니라 순차적으로 요청 (10분 캐시가 있어 재방문은 빠름)
+  // API 속도 제한을 피하려고 병렬이 아니라 순차적으로 요청. 이미 끝난 라운드의 명단은
+  // 바뀔 일이 없으므로 30일간 캐싱 — 두 번째 방문부터는 네트워크 요청 없이 즉시 뜬다.
   const merged = {};
   for (const key of candidates) {
+    const url = `${OPENF1}/drivers?session_key=${key}`;
+    const wasCached = readApiCache(url) !== undefined;
     try {
-      const drivers = await fetchJSON(`${OPENF1}/drivers?session_key=${key}`);
+      const drivers = await fetchJSON(url, { ttl: TTL_LONG });
       for (const d of drivers || []) merged[d.driver_number] = d;
     } catch (e) {
       /* skip */
     }
-    await sleep(120); // API 속도 제한을 피하기 위한 최소한의 텀
+    if (!wasCached) await sleep(120); // API 속도 제한을 피하기 위한 최소한의 텀
   }
 
   const drivers = Object.values(merged);
@@ -199,12 +204,16 @@ async function loadDriverRoster() {
   }
 }
 
-async function getSessionResults(sessionKey) {
+const RESULT_FINAL_BUFFER_MS = 6 * 60 * 60 * 1000; // 세션 시작 6시간 후부터는 결과가 확정됐다고 보고 길게 캐싱
+
+async function getSessionResults(sessionKey, sessionDate) {
   if (!sessionKey) return [];
   if (state.results[sessionKey]) return state.results[sessionKey];
-  const wasCached = readApiCache(`${OPENF1}/session_result?session_key=${sessionKey}`) !== undefined;
+  const url = `${OPENF1}/session_result?session_key=${sessionKey}`;
+  const wasCached = readApiCache(url) !== undefined;
+  const isFinal = sessionDate && Date.now() - new Date(sessionDate).getTime() > RESULT_FINAL_BUFFER_MS;
   try {
-    const res = await fetchJSON(`${OPENF1}/session_result?session_key=${sessionKey}`);
+    const res = await fetchJSON(url, { ttl: isFinal ? TTL_LONG : TTL_SHORT });
     state.results[sessionKey] = res || [];
   } catch (e) {
     state.results[sessionKey] = [];
@@ -231,10 +240,11 @@ async function loadChampionship() {
     .sort((a, b) => new Date(b.raceDate) - new Date(a.raceDate));
   if (!past.length) return;
   const key = past[0].raceSessionKey;
+  const isFinal = Date.now() - new Date(past[0].raceDate).getTime() > RESULT_FINAL_BUFFER_MS;
   try {
     const [d, t] = await Promise.all([
-      fetchJSON(`${OPENF1}/championship_drivers?session_key=${key}`),
-      fetchJSON(`${OPENF1}/championship_teams?session_key=${key}`),
+      fetchJSON(`${OPENF1}/championship_drivers?session_key=${key}`, { ttl: isFinal ? TTL_LONG : TTL_SHORT }),
+      fetchJSON(`${OPENF1}/championship_teams?session_key=${key}`, { ttl: isFinal ? TTL_LONG : TTL_SHORT }),
     ]);
     state.championshipDrivers = (d || []).sort((a, b) => a.position_current - b.position_current);
     state.championshipTeams = (t || []).sort((a, b) => a.position_current - b.position_current);
@@ -289,7 +299,7 @@ async function renderPicksTab() {
     let results = [];
     let statusLabel = "예정";
     if (isPast && sess.sessionKey) {
-      results = await getSessionResults(sess.sessionKey);
+      results = await getSessionResults(sess.sessionKey, sess.date);
       statusLabel = results.length ? "완료" : "결과 대기 중";
     }
 
@@ -368,7 +378,7 @@ async function computeAllScores() {
     for (const sess of sessionsInRound) {
       const isPast = sess.date && new Date(sess.date) <= new Date();
       if (!isPast) continue;
-      const results = await getSessionResults(sess.sessionKey);
+      const results = await getSessionResults(sess.sessionKey, sess.date);
       if (!results.length) {
         if (Date.now() - new Date(sess.date).getTime() > STALE_MS) missingCount++;
         continue;
