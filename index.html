@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+<title>아빠 vs 딸 F1 픽</title>
+
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="icons/favicon-32.png" sizes="32x32" />
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="F1 픽" />
+<meta name="theme-color" content="#111111" />
+
+<link rel="stylesheet" href="style.css" />
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <h1>🏁 아빠 vs 딸 F1 픽</h1>
+  <div id="syncBadge" class="badge">확인 중…</div>
+</header>
+
+<nav class="tabs">
+  <button class="tab-btn active" data-tab="picks">픽하기</button>
+  <button class="tab-btn" data-tab="scoreboard">스코어보드</button>
+  <button class="tab-btn" data-tab="standings">드라이버/팀 순위</button>
+  <button class="tab-btn" data-tab="trend">추이</button>
+</nav>
+
+<main id="app">
+
+  <section id="tab-picks" class="tab-panel active">
+    <div class="round-nav">
+      <button id="prevRound" class="round-arrow">‹</button>
+      <select id="roundSelect"></select>
+      <button id="nextRound" class="round-arrow">›</button>
+    </div>
+    <div id="roundMeta" class="round-meta"></div>
+    <div id="picksContent"></div>
+  </section>
+
+  <section id="tab-scoreboard" class="tab-panel">
+    <div id="scoreboardSummary" class="summary-cards"></div>
+    <div id="scoreboardTable"></div>
+  </section>
+
+  <section id="tab-standings" class="tab-panel">
+    <div class="standings-columns">
+      <div>
+        <h2>드라이버 순위</h2>
+        <div id="driverStandings"></div>
+      </div>
+      <div>
+        <h2>컨스트럭터 순위</h2>
+        <div id="teamStandings"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-trend" class="tab-panel">
+    <canvas id="trendChart" height="260"></canvas>
+  </section>
+
+  <div id="loadingOverlay" class="loading-overlay hidden">
+    <div class="spinner"></div>
+  </div>
+
+</main>
+
+<script src="firebase-config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
