@@ -41,6 +41,8 @@ function writeApiCache(url, value) {
   } catch (e) { /* storage full or unavailable, ignore */ }
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 async function fetchJSON(url, { retries = 4 } = {}) {
   const cached = readApiCache(url);
   if (cached !== undefined) return cached;
@@ -171,23 +173,22 @@ async function loadDriverRoster() {
     .filter((r) => r.raceDate && new Date(r.raceDate) <= now)
     .sort((a, b) => new Date(a.raceDate) - new Date(b.raceDate)); // 오래된 순 → 최신 정보가 나중에 덮어씀
 
-  const candidates = [];
-  for (const r of past) {
-    if (r.raceSessionKey) candidates.push(r.raceSessionKey);
-    if (r.sprintSessionKey) candidates.push(r.sprintSessionKey);
-  }
+  // 레이스 세션 하나만 있어도 그 주말 드라이버 명단은 충분 (스프린트까지 따로 부를 필요 없음)
+  const candidates = past.map((r) => r.raceSessionKey).filter(Boolean);
   // 아직 한 라운드도 안 열렸다면 프리시즌 테스트라도 시도
   if (candidates.length === 0) candidates.push(11465);
 
+  // API 속도 제한을 피하려고 병렬이 아니라 순차적으로 요청 (10분 캐시가 있어 재방문은 빠름)
   const merged = {};
-  await Promise.all(candidates.map(async (key) => {
+  for (const key of candidates) {
     try {
       const drivers = await fetchJSON(`${OPENF1}/drivers?session_key=${key}`);
       for (const d of drivers || []) merged[d.driver_number] = d;
     } catch (e) {
       /* skip */
     }
-  }));
+    await sleep(120); // API 속도 제한을 피하기 위한 최소한의 텀
+  }
 
   const drivers = Object.values(merged);
   if (drivers.length) {
@@ -201,12 +202,14 @@ async function loadDriverRoster() {
 async function getSessionResults(sessionKey) {
   if (!sessionKey) return [];
   if (state.results[sessionKey]) return state.results[sessionKey];
+  const wasCached = readApiCache(`${OPENF1}/session_result?session_key=${sessionKey}`) !== undefined;
   try {
     const res = await fetchJSON(`${OPENF1}/session_result?session_key=${sessionKey}`);
     state.results[sessionKey] = res || [];
   } catch (e) {
     state.results[sessionKey] = [];
   }
+  if (!wasCached) await sleep(120); // API 속도 제한을 피하기 위한 최소한의 텀
   return state.results[sessionKey];
 }
 
@@ -347,6 +350,8 @@ async function computeAllScores() {
   let cumDaughter = 0;
   let winsDad = 0;
   let winsDaughter = 0;
+  let missingCount = 0;
+  const STALE_MS = 2 * 24 * 60 * 60 * 1000; // 레이스가 이틀 넘게 지났는데 결과가 비어있으면 조회 실패로 간주
 
   for (const round of state.rounds) {
     const roundPicks = state.picks[round.round];
@@ -364,7 +369,10 @@ async function computeAllScores() {
       const isPast = sess.date && new Date(sess.date) <= new Date();
       if (!isPast) continue;
       const results = await getSessionResults(sess.sessionKey);
-      if (!results.length) continue;
+      if (!results.length) {
+        if (Date.now() - new Date(sess.date).getTime() > STALE_MS) missingCount++;
+        continue;
+      }
 
       const dadScore = scoreFromResults(results, sess.picks.dad, sess.points);
       const daughterScore = scoreFromResults(results, sess.picks.daughter, sess.points);
@@ -389,13 +397,21 @@ async function computeAllScores() {
     }
   }
 
-  return { rows, cumDad, cumDaughter, winsDad, winsDaughter };
+  return { rows, cumDad, cumDaughter, winsDad, winsDaughter, missingCount };
 }
 
 async function renderScoreboardTab() {
   showLoading(true);
-  const { rows, cumDad, cumDaughter, winsDad, winsDaughter } = await computeAllScores();
+  const { rows, cumDad, cumDaughter, winsDad, winsDaughter, missingCount } = await computeAllScores();
   showLoading(false);
+
+  const warningEl = document.getElementById("scoreboardWarning");
+  if (missingCount > 0) {
+    warningEl.textContent = `⚠️ ${missingCount}개 세션 결과를 못 불러왔습니다 (API 일시 오류). 잠시 후 다시 열어보면 정확한 값으로 채워집니다.`;
+    warningEl.style.display = "block";
+  } else {
+    warningEl.style.display = "none";
+  }
 
   document.getElementById("scoreboardSummary").innerHTML = `
     <div class="summary-card dad">

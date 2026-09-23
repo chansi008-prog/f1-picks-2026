@@ -178,6 +178,16 @@ main {
   opacity: 0.5;
 }
 
+.warning-banner {
+  background: #3a2a10;
+  color: #f0a020;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  margin: 10px 0;
+  line-height: 1.5;
+}
+
 .summary-cards {
   display: flex;
   gap: 10px;
