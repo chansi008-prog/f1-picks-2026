@@ -41,14 +41,14 @@ function writeApiCache(url, value) {
   } catch (e) { /* storage full or unavailable, ignore */ }
 }
 
-async function fetchJSON(url, { retries = 2 } = {}) {
+async function fetchJSON(url, { retries = 4 } = {}) {
   const cached = readApiCache(url);
   if (cached !== undefined) return cached;
 
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(url);
     if (res.status === 429 && attempt < retries) {
-      await new Promise((r) => setTimeout(r, 600 * (attempt + 1) * (attempt + 1)));
+      await new Promise((r) => setTimeout(r, 500 * (attempt + 1) * (attempt + 1)));
       continue;
     }
     if (!res.ok) throw new Error(`${res.status} ${url}`);
