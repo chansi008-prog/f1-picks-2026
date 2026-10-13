@@ -178,6 +178,57 @@ main {
   opacity: 0.5;
 }
 
+.toggle-results-btn {
+  width: 100%;
+  margin-top: 10px;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 12.5px;
+  padding: 6px;
+}
+
+.results-list {
+  margin-top: 6px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.result-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 5px 2px;
+  font-size: 12.5px;
+}
+
+.result-pos {
+  width: 26px;
+  flex-shrink: 0;
+  color: var(--muted);
+  font-weight: 700;
+  text-align: center;
+}
+
+.result-name {
+  flex: 1;
+}
+
+.result-team {
+  display: block;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.result-pts {
+  color: var(--win);
+  font-weight: 700;
+  min-width: 20px;
+  text-align: right;
+}
+
 .warning-banner {
   background: #3a2a10;
   color: #f0a020;

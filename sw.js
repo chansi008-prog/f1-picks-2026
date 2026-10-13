@@ -1,4 +1,4 @@
-const CACHE_NAME = "f1-picks-2026-v5";
+const CACHE_NAME = "f1-picks-2026-v6";
 const APP_SHELL = [
   "./",
   "./index.html",

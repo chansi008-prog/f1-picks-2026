@@ -323,7 +323,41 @@ async function renderPicksTab() {
         <div class="person-score">${daughterScore === null ? "-" : daughterScore}</div>
       </div>
       <button class="save-btn">픽 저장</button>
+      ${results.length ? `
+        <button class="toggle-results-btn" type="button">전체 순위 보기 ▾</button>
+        <div class="results-list" hidden>
+          ${results
+            .slice()
+            .sort((a, b) => (a.position || 999) - (b.position || 999))
+            .map((r) => {
+              const info = state.drivers[r.driver_number];
+              const name = info ? info.full_name : `#${r.driver_number}`;
+              const team = info ? info.team_name : "";
+              const dnfLike = r.dnf || r.dns || r.dsq;
+              const posLabel = r.dsq ? "DSQ" : r.dns ? "DNS" : r.dnf ? "DNF" : r.position != null ? r.position : "-";
+              const pts = dnfLike ? 0 : (sess.points[r.position] || 0);
+              return `
+                <div class="result-row">
+                  <span class="result-pos">${posLabel}</span>
+                  <span class="result-name">${name}<span class="result-team">${team}</span></span>
+                  <span class="result-pts">${pts ? pts : ""}</span>
+                </div>
+              `;
+            })
+            .join("")}
+        </div>
+      ` : ""}
     `;
+
+    const toggleBtn = card.querySelector(".toggle-results-btn");
+    if (toggleBtn) {
+      toggleBtn.addEventListener("click", () => {
+        const list = card.querySelector(".results-list");
+        const nowHidden = !list.hidden;
+        list.hidden = nowHidden;
+        toggleBtn.textContent = nowHidden ? "전체 순위 보기 ▾" : "전체 순위 숨기기 ▴";
+      });
+    }
 
     card.querySelector(".save-btn").addEventListener("click", async () => {
       const dad = [
