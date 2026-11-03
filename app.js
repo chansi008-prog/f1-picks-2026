@@ -258,6 +258,13 @@ async function loadChampionship() {
 
 function driverOptionsHTML(selected) {
   let html = `<option value="">— 선택 —</option>`;
+  // 드라이버 명단을 못 불러왔거나 이번 명단에 없는 드라이버라도, 저장된 픽 자체는 번호로라도 보여준다
+  const inList = state.driverList.some((d) => String(d.driver_number) === String(selected));
+  if (selected && !inList) {
+    const info = state.drivers[selected];
+    const label = info ? `#${selected} ${info.name_acronym} · ${info.team_name}` : `#${selected}`;
+    html += `<option value="${selected}" selected>${label}</option>`;
+  }
   for (const d of state.driverList) {
     const sel = String(d.driver_number) === String(selected) ? "selected" : "";
     html += `<option value="${d.driver_number}" ${sel}>#${d.driver_number} ${d.name_acronym} · ${d.team_name}</option>`;
@@ -270,7 +277,8 @@ function renderRoundSelect() {
   sel.innerHTML = state.rounds
     .map((r) => `<option value="${r.round}">R${r.round} · ${r.name}</option>`)
     .join("");
-  sel.value = state.rounds[state.currentRoundIdx].round;
+  const current = state.rounds[state.currentRoundIdx];
+  if (current) sel.value = current.round;
 }
 
 async function renderPicksTab() {
