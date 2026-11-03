@@ -49,17 +49,23 @@ async function fetchJSON(url, { retries = 4, ttl = TTL_SHORT } = {}) {
   const cached = readApiCache(url);
   if (cached !== undefined) return cached;
 
-  for (let attempt = 0; ; attempt++) {
-    const res = await fetch(url);
-    if (res.status === 429 && attempt < retries) {
-      await new Promise((r) => setTimeout(r, 500 * (attempt + 1) * (attempt + 1)));
-      continue;
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`${res.status} ${url}`);
+      const data = await res.json();
+      if (url.includes(OPENF1)) writeApiCache(url, data, ttl);
+      return data;
+    } catch (e) {
+      // 429뿐 아니라 셀룰러 환경의 일시적 네트워크 실패(연결 끊김, 타임아웃 등)도 재시도한다
+      lastErr = e;
+      if (attempt < retries) {
+        await new Promise((r) => setTimeout(r, 500 * (attempt + 1) * (attempt + 1)));
+      }
     }
-    if (!res.ok) throw new Error(`${res.status} ${url}`);
-    const data = await res.json();
-    if (url.includes(OPENF1)) writeApiCache(url, data, ttl);
-    return data;
   }
+  throw lastErr;
 }
 
 function deepMerge(base, override) {
