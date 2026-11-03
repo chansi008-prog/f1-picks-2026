@@ -390,6 +390,18 @@ td.round-name {
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
+.hard-reset-link {
+  display: block;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 11px;
+  text-decoration: underline;
+  padding: 24px 10px 10px;
+  text-align: center;
+}
+
 .empty-note {
   color: var(--muted);
   font-size: 13px;

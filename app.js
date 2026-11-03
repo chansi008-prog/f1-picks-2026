@@ -701,3 +701,24 @@ if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   });
 }
+
+document.getElementById("hardResetBtn").addEventListener("click", async () => {
+  if (!confirm("이 F1 픽 앱의 저장된 데이터(이 기기에만 저장된 픽, 캐시)를 지우고 새로고침합니다. 계속할까요?")) return;
+  try {
+    localStorage.removeItem(LOCAL_KEY);
+    localStorage.removeItem(API_CACHE_KEY);
+  } catch (e) { /* ignore */ }
+  try {
+    if ("serviceWorker" in navigator) {
+      // scope가 이 앱 폴더로 시작하는 등록만 해제 — 같은 도메인의 다른 프로젝트는 건드리지 않는다.
+      const here = new URL("./", location.href).href;
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.filter((r) => r.scope.startsWith(here)).map((r) => r.unregister()));
+    }
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.filter((k) => k.startsWith("f1-picks-2026-")).map((k) => caches.delete(k)));
+    }
+  } catch (e) { /* ignore */ }
+  location.reload();
+});
