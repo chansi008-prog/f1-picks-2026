@@ -45,6 +45,16 @@ function writeApiCache(url, value, ttl) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+async function fetchWithTimeout(url, ms) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function fetchJSON(url, { retries = 4, ttl = TTL_SHORT } = {}) {
   const cached = readApiCache(url);
   if (cached !== undefined) return cached;
@@ -52,7 +62,7 @@ async function fetchJSON(url, { retries = 4, ttl = TTL_SHORT } = {}) {
   let lastErr;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const res = await fetch(url);
+      const res = await fetchWithTimeout(url, 8000); // 응답 없이 멈추는 요청도 8초 후 실패 처리 → 재시도
       if (!res.ok) throw new Error(`${res.status} ${url}`);
       const data = await res.json();
       if (url.includes(OPENF1)) writeApiCache(url, data, ttl);
@@ -177,11 +187,15 @@ async function loadRounds() {
 
 async function loadDriverRoster() {
   const now = new Date();
+  // 최근 3라운드만 있으면 현재 로스터(중간 이적 포함) 파악에 충분하다.
+  // 예전엔 시즌 전체 과거 라운드를 순차로 다 불러왔는데, 요청이 ~20개까지 쌓이다 보니
+  // 셀룰러 환경에서 어느 하나만 계속 실패해도 전체가 깨지기 쉬웠다 — 범위를 좁혀 안정성을 높인다.
   const past = state.rounds
     .filter((r) => r.raceDate && new Date(r.raceDate) <= now)
-    .sort((a, b) => new Date(a.raceDate) - new Date(b.raceDate)); // 오래된 순 → 최신 정보가 나중에 덮어씀
+    .sort((a, b) => new Date(b.raceDate) - new Date(a.raceDate))
+    .slice(0, 3)
+    .reverse(); // 오래된 순 → 최신 정보가 나중에 덮어씀
 
-  // 레이스 세션 하나만 있어도 그 주말 드라이버 명단은 충분 (스프린트까지 따로 부를 필요 없음)
   const candidates = past.map((r) => r.raceSessionKey).filter(Boolean);
   // 아직 한 라운드도 안 열렸다면 프리시즌 테스트라도 시도
   if (candidates.length === 0) candidates.push(11465);
