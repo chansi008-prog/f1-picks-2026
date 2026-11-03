@@ -215,11 +215,12 @@ async function getSessionResults(sessionKey, sessionDate) {
   try {
     const res = await fetchJSON(url, { ttl: isFinal ? TTL_LONG : TTL_SHORT });
     state.results[sessionKey] = res || [];
+    if (!wasCached) await sleep(120); // API 속도 제한을 피하기 위한 최소한의 텀
+    return state.results[sessionKey];
   } catch (e) {
-    state.results[sessionKey] = [];
+    if (!wasCached) await sleep(120);
+    return []; // 실패는 메모이즈하지 않음 — 새로고침하면 다시 시도됨
   }
-  if (!wasCached) await sleep(120); // API 속도 제한을 피하기 위한 최소한의 텀
-  return state.results[sessionKey];
 }
 
 function scoreFromResults(results, driverNumbers, pointsMap) {
@@ -591,7 +592,10 @@ const tabRenderers = {
   trend: renderTrendTab,
 };
 
+let currentTab = "picks";
+
 function switchTab(name) {
+  currentTab = name;
   document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
   document.querySelectorAll(".tab-panel").forEach((p) => p.classList.toggle("active", p.id === `tab-${name}`));
   tabRenderers[name]();
@@ -599,6 +603,21 @@ function switchTab(name) {
 
 document.querySelectorAll(".tab-btn").forEach((btn) => {
   btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+});
+
+document.getElementById("refreshBtn").addEventListener("click", async (e) => {
+  const btn = e.currentTarget;
+  if (btn.classList.contains("spinning")) return;
+  btn.classList.add("spinning");
+  // 결과·순위는 메모리 캐시만 비우고 다시 불러온다 (일정·드라이버 명단 같은 장기 캐시는 그대로 유지)
+  state.results = {};
+  state.championshipDrivers = [];
+  state.championshipTeams = [];
+  try {
+    await Promise.all([tabRenderers[currentTab](), loadChampionship()]);
+  } finally {
+    btn.classList.remove("spinning");
+  }
 });
 
 document.getElementById("roundSelect").addEventListener("change", (e) => {
