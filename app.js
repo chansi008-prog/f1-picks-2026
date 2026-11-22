@@ -10,6 +10,7 @@ const LOCAL_MODE_KEY = "f1picks_local_only";
 
 const state = {
   rounds: [],
+  allSessions: [],
   driverList: [],
   drivers: {},
   picks: {},
@@ -26,11 +27,11 @@ const TTL_SHORT = 10 * 60 * 1000; // 10분: 곧 바뀔 수 있는 데이터 (예
 const TTL_MEDIUM = 60 * 60 * 1000; // 1시간: 시즌 일정처럼 가끔만 바뀌는 데이터
 const TTL_LONG = 30 * 24 * 60 * 60 * 1000; // 30일: 이미 끝난 경기 결과·명단처럼 절대 안 바뀌는 데이터
 
-function readApiCache(url) {
+function readApiCache(url, { allowStale = false } = {}) {
   try {
     const all = JSON.parse(localStorage.getItem(API_CACHE_KEY) || "{}");
     const entry = all[url];
-    if (entry && Date.now() - entry.t < entry.ttl) return entry.v;
+    if (entry && (allowStale || Date.now() - entry.t < entry.ttl)) return entry.v;
   } catch (e) { /* ignore */ }
   return undefined;
 }
@@ -41,6 +42,33 @@ function writeApiCache(url, value, ttl) {
     all[url] = { t: Date.now(), v: value, ttl };
     localStorage.setItem(API_CACHE_KEY, JSON.stringify(all));
   } catch (e) { /* storage full or unavailable, ignore */ }
+}
+
+// OpenF1은 F1 라이브 세션(연습·예선·스프린트·레이스) 진행 중에는 무료 접근을 통째로 막는다
+// (401, CORS 헤더 없음 → 브라우저에선 그냥 fetch 실패로 보임). 그래서 받아온 데이터를
+// Firebase에도 복사해 두고, 막혔을 때는 기기 캐시(만료돼도) → Firebase 공유 캐시 순으로 대신 쓴다.
+let openf1Unavailable = false;
+
+function sharedCacheUrl(url) {
+  const key = btoa(url.slice(OPENF1.length)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return `${DB_URL}/apicache/${key}.json`;
+}
+
+function writeSharedCache(url, value) {
+  if (!DB_URL) return;
+  fetch(sharedCacheUrl(url), { method: "PUT", body: JSON.stringify(value) }).catch(() => {});
+}
+
+async function readSharedCache(url) {
+  if (!DB_URL) return undefined;
+  try {
+    const res = await fetchWithTimeout(sharedCacheUrl(url), 8000);
+    if (!res.ok) return undefined;
+    const data = await res.json();
+    return data == null ? undefined : data;
+  } catch (e) {
+    return undefined;
+  }
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -55,27 +83,64 @@ async function fetchWithTimeout(url, ms) {
   }
 }
 
-async function fetchJSON(url, { retries = 4, ttl = TTL_SHORT } = {}) {
+async function fallbackFor(url) {
+  const stale = readApiCache(url, { allowStale: true });
+  if (stale !== undefined) return stale;
+  return readSharedCache(url);
+}
+
+async function fetchJSON(url, { retries = 2, ttl = TTL_SHORT } = {}) {
   const cached = readApiCache(url);
   if (cached !== undefined) return cached;
 
+  const isOpenF1 = url.startsWith(OPENF1);
+  if (isOpenF1 && openf1Unavailable) {
+    const fb = await fallbackFor(url);
+    if (fb !== undefined) return fb;
+    throw new Error("OpenF1 unavailable");
+  }
+
+  // 예전 데이터라도 있으면 재시도로 오래 붙잡지 않고 한 번만 시도한 뒤 바로 그걸 쓴다
+  const hasStale = isOpenF1 && readApiCache(url, { allowStale: true }) !== undefined;
+  const attempts = hasStale ? 1 : retries + 1;
+
   let lastErr;
-  for (let attempt = 0; attempt <= retries; attempt++) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
     try {
-      const res = await fetchWithTimeout(url, 8000); // 응답 없이 멈추는 요청도 8초 후 실패 처리 → 재시도
+      const res = await fetchWithTimeout(url, 8000);
       if (!res.ok) throw new Error(`${res.status} ${url}`);
       const data = await res.json();
-      if (url.includes(OPENF1)) writeApiCache(url, data, ttl);
+      if (isOpenF1) {
+        writeApiCache(url, data, ttl);
+        writeSharedCache(url, data);
+      }
       return data;
     } catch (e) {
-      // 429뿐 아니라 셀룰러 환경의 일시적 네트워크 실패(연결 끊김, 타임아웃 등)도 재시도한다
       lastErr = e;
-      if (attempt < retries) {
-        await new Promise((r) => setTimeout(r, 500 * (attempt + 1) * (attempt + 1)));
-      }
+      if (attempt < attempts - 1) await sleep(500 * (attempt + 1) * (attempt + 1));
     }
   }
+
+  if (isOpenF1) {
+    openf1Unavailable = true;
+    showApiNotice();
+    const fb = await fallbackFor(url);
+    if (fb !== undefined) return fb;
+  }
   throw lastErr;
+}
+
+function showApiNotice() {
+  const el = document.getElementById("apiNotice");
+  if (!el) return;
+  const now = Date.now();
+  const live = (state.allSessions || []).find(
+    (s) => new Date(s.date_start).getTime() <= now && now <= new Date(s.date_end).getTime()
+  );
+  el.textContent = live
+    ? `🔒 지금 F1 ${live.location} ${live.session_name} 진행 중이라 OpenF1이 데이터 조회를 잠가뒀어요. 저장해 둔 데이터로 보여드립니다 — 세션이 끝나면 🔄 새로고침하세요.`
+    : "⚠️ OpenF1 서버에 연결하지 못해 저장해 둔 데이터로 보여드립니다. 잠시 후 🔄 새로고침하세요.";
+  el.hidden = false;
 }
 
 function deepMerge(base, override) {
@@ -157,6 +222,8 @@ async function loadRounds() {
     fetchJSON(`${OPENF1}/meetings?year=${SEASON_YEAR}`, { ttl: TTL_MEDIUM }),
     fetchJSON(`${OPENF1}/sessions?year=${SEASON_YEAR}`, { ttl: TTL_MEDIUM }),
   ]);
+
+  state.allSessions = sessions;
 
   const gpMeetings = meetings
     .filter((m) => !/testing/i.test(m.meeting_name) && !m.is_cancelled)
@@ -641,6 +708,8 @@ document.getElementById("refreshBtn").addEventListener("click", async (e) => {
   state.results = {};
   state.championshipDrivers = [];
   state.championshipTeams = [];
+  openf1Unavailable = false;
+  document.getElementById("apiNotice").hidden = true;
   try {
     await Promise.all([tabRenderers[currentTab](), loadChampionship()]);
   } finally {
@@ -677,6 +746,7 @@ async function init() {
     state.picks = deepMerge(seed, live);
 
     await loadRounds();
+    if (openf1Unavailable) showApiNotice(); // 세션 목록을 받은 뒤라 어떤 세션 때문에 잠겼는지 안내 가능
 
     // 오늘 이후 가장 가까운(또는 가장 최근 지난) 라운드를 기본 선택
     const now = new Date();
@@ -689,7 +759,9 @@ async function init() {
     await Promise.all([renderPicksTab(), loadChampionship()]);
   } catch (e) {
     console.error(e);
-    document.getElementById("picksContent").innerHTML = `<div class="empty-note">데이터를 불러오지 못했습니다. 네트워크를 확인해 주세요.<br>${e.message}</div>`;
+    document.getElementById("picksContent").innerHTML = openf1Unavailable
+      ? `<div class="empty-note">F1 세션 진행 중에는 OpenF1이 데이터 조회를 잠가서, 이 기기에 저장된 데이터가 없으면 표시할 수 없어요.<br>세션이 끝난 뒤 🔄 새로고침해 주세요.</div>`
+      : `<div class="empty-note">데이터를 불러오지 못했습니다. 네트워크를 확인해 주세요.<br>${e.message}</div>`;
   }
   showLoading(false);
 }
